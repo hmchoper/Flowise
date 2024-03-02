@@ -1,9 +1,23 @@
 import { BaseRetriever } from '@langchain/core/retrievers'
 import { BaseLanguageModel } from '@langchain/core/language_models/base'
 import { RetrievalQAChain } from 'langchain/chains'
+import { ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate, PromptTemplate, } from "@langchain/core/prompts";
 import { ConsoleCallbackHandler, CustomChainHandler, additionalCallbacks } from '../../../src/handler'
+import { ConditionalPromptSelector, isChatModel, } from "@langchain/core/example_selectors";
 import { ICommonObject, INode, INodeData, INodeParams } from '../../../src/Interface'
 import { getBaseClasses } from '../../../src/utils'
+
+
+const DEFAULT_QA_PROMPT = new PromptTemplate({
+    template: "Use the following pieces of context to answer the question at the end. If you don't know the answer, just say that you don't know, don't try to make up an answer.\n\n{context}\n\nHelpful Answer:",
+    inputVariables: ["context"],
+});
+
+const DEFAULT_PREFIX = `Use the following pieces of context to answer the users question. 
+If you don't know the answer, just say that you don't know, don't try to make up an answer.
+----------------
+{context}
+`
 
 class RetrievalQAChain_Chains implements INode {
     label: string
@@ -35,6 +49,16 @@ class RetrievalQAChain_Chains implements INode {
                 label: 'Vector Store Retriever',
                 name: 'vectorStoreRetriever',
                 type: 'BaseRetriever'
+            },
+            {
+                label: 'System Message',
+                name: 'systemMessage',
+                type: 'string',
+                rows: 4,
+                default: DEFAULT_PREFIX,
+                optional: true,
+                additionalParams: true,
+                warning: "Prompt must include 1 input variables: {context}. You can refer to official guide from description above",
             }
         ]
     }
@@ -42,8 +66,18 @@ class RetrievalQAChain_Chains implements INode {
     async init(nodeData: INodeData): Promise<any> {
         const model = nodeData.inputs?.model as BaseLanguageModel
         const vectorStoreRetriever = nodeData.inputs?.vectorStoreRetriever as BaseRetriever
+        const systemMessage = nodeData.inputs?.systemMessage as string
 
-        const chain = RetrievalQAChain.fromLLM(model, vectorStoreRetriever, { verbose: process.env.DEBUG === 'true' ? true : false })
+        const messages = [
+            SystemMessagePromptTemplate.fromTemplate(systemMessage),
+            HumanMessagePromptTemplate.fromTemplate("{question}"),
+        ];
+        const CHAT_PROMPT = ChatPromptTemplate.fromMessages(messages);
+        const QA_PROMPT_SELECTOR = new ConditionalPromptSelector(DEFAULT_QA_PROMPT, [[isChatModel, CHAT_PROMPT]]);
+
+        const prompt = QA_PROMPT_SELECTOR.getPrompt(model)
+        const chain = RetrievalQAChain.fromLLM(model, vectorStoreRetriever, { verbose: process.env.DEBUG === 'true' ? true : false, prompt })
+
         return chain
     }
 
